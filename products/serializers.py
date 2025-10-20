@@ -1,14 +1,20 @@
 from rest_framework import serializers
-from .models import Category, Product, ProductImage, MemoryOption, Color, ProductVariant, Accessory, Bundle
+from .models import (
+    Category, Product, ProductImage, MemoryOption, Color,
+    ProductVariant, AccessoryTarif, Bundle,
+    Accessory, AccessoryImage
+)
 
 
+# Kategoriya serializer
 class CategorySerializer(serializers.ModelSerializer):
-    sub_count = serializers.IntegerField(read_only=True)
-    product_count = serializers.IntegerField(read_only=True)
+    sub_count = serializers.IntegerField(read_only=True)  # Faol sub-kategoriyalar soni
+    product_count = serializers.IntegerField(read_only=True)  # Kategoriyadagi mahsulotlar soni
 
     class Meta:
         model = Category
         fields = ['id', 'name', 'slug', 'icon', 'sub_count', 'product_count']
+
 
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
@@ -40,7 +46,7 @@ class ProductImageSerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     likes_count = serializers.IntegerField(read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
-    category = serializers.StringRelatedField()
+    category = serializers.StringRelatedField()  # faqat nomini ko‘rsatadi
 
     class Meta:
         model = Product
@@ -50,13 +56,14 @@ class ProductSerializer(serializers.ModelSerializer):
         ]
 
 
-class AccessorySerializer(serializers.ModelSerializer):
+class AccessoryTarifSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Accessory
+        model = AccessoryTarif
         fields = ['id', 'name', 'price', 'type', 'image']
 
+
 class BundleSerializer(serializers.ModelSerializer):
-    accessories = AccessorySerializer(many=True)
+    accessories = AccessoryTarifSerializer(many=True)
     total_price = serializers.SerializerMethodField()
 
     class Meta:
@@ -87,4 +94,16 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         ]
 
 
+class AccessoryImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AccessoryImage
+        fields = ['id', 'image', 'alt_text']
 
+
+class AccessorySerializer(serializers.ModelSerializer):
+    compatible_products = serializers.StringRelatedField(many=True)  # Mahsulot nomlari
+    images = AccessoryImageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Accessory
+        fields = ['id', 'title', 'price', 'description', 'compatible_products', 'images']

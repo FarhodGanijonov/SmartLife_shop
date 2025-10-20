@@ -1,10 +1,11 @@
 from django.db.models import Sum
+from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView, get_object_or_404
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status, generics
 
-from products.models import ProductVariant, Bundle
+from products.models import ProductVariant, Bundle, Accessory
 from .models import Order, PromoCode, CartItem
 from .serializers import OrderSerializer, PromoCodeSerializer, CartItemSerializer, CartSerializer
 from .utils import get_or_create_cart
@@ -15,116 +16,57 @@ class OrderGenericAPIView(generics.GenericAPIView):
     permission_classes = []  # login shart emas
 
     def get_queryset(self):
-        """
-        Anonymous foydalanuvchi uchun barcha buyurtmalar yoki
-        frontend tarafdan filterlangan buyurtmalarni qaytarish.
-        """
+        # Buyurtmalarni tegishli bog‘lamalar bilan birga olish
         return Order.objects.all().select_related("delivery_option", "user").prefetch_related("items__variant")
+
     def get(self, request, *args, **kwargs):
+        # Barcha buyurtmalarni ro‘yxat tarzida qaytaradi
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
     def post(self, request, *args, **kwargs):
+        # Yangi buyurtma yaratish
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        # login qilmagan foydalanuvchi uchun user=None
         user = request.user if request.user.is_authenticated else None
         serializer.save(user=user)
-
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-
-class ApplyPromoCodeAPIView(GenericAPIView):
-    """Promokod qo‘llash API (GenericAPIView versiyasi)"""
-    serializer_class = PromoCodeSerializer
-    queryset = PromoCode.objects.all()
-
-    def post(self, request, *args, **kwargs):
-        code = request.data.get('code')
-        total = request.data.get('total')
-        variant_ids = request.data.get('variant_ids', [])
-
-        #  Validatsiya
-        if not code and not total and not variant_ids:
-            return Response(
-                {"error": "Promokod va summa yoki variantlar kiritilishi kerak."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Variantlar orqali jami summani topish
-        if variant_ids:
-            variants = ProductVariant.objects.filter(id__in=variant_ids)
-            total_amount = variants.aggregate(total=Sum('price'))['total'] or 0
-        else:
-            total_amount = float(total)
-
-        # Promokodni topish
-        promo = self.get_queryset().filter(code__iexact=code).first()
-        if not promo:
-            return Response({"error": "Bunday promokod topilmadi"}, status=404)
-
-        # Amal qilish muddati va ishlatilish holatini tekshirish
-        if not promo.is_valid():
-            return Response(
-                {"error": "Promokod muddati tugagan yoki ishlatilgan."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Minimal summa shartini tekshirish
-        if total_amount < promo.min_order_amount:
-            return Response(
-                {"error": f"Promokod faqat {promo.min_order_amount} so‘mdan yuqori buyurtmalarga amal qiladi."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        #  Chegirma hisoblash
-        new_total = promo.apply_discount(total_amount)
-
-        #  Foydalanilgan promokodni hisoblash
-        promo.used_count += 1
-        promo.save(update_fields=['used_count'])
-
-        #  Javob
-        return Response({
-            "code": promo.code,
-            "discount_type": promo.discount_type,
-            "old_total": total_amount,
-            "new_total": new_total,
-            "discount_applied": round(total_amount - new_total, 2),
-        }, status=status.HTTP_200_OK)
-
-
-
-
 class CartDetailAPIView(generics.RetrieveAPIView):
-    """GET /api/cart/ — foydalanuvchining savatini olish"""
     serializer_class = CartSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
+        # Foydalanuvchining mavjud yoki yangi savatini qaytaradi
         return get_or_create_cart(self.request)
 
 
 class CartAddAPIView(generics.CreateAPIView):
-    """POST /api/cart/add/ — savatga mahsulot qo‘shish"""
     serializer_class = CartItemSerializer
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
         cart = get_or_create_cart(request)
         variant_id = request.data.get("variant_id")
-        bundle_id = request.data.get("bundle_id")  # optional
+        bundle_id = request.data.get("bundle_id")
+        accessory_id = request.data.get("accessory_id")
         quantity = int(request.data.get("quantity", 1))
 
-        variant = get_object_or_404(ProductVariant, pk=variant_id)
-        bundle = None
-        if bundle_id:
-            bundle = get_object_or_404(Bundle, pk=bundle_id, product=variant.product)
+        variant = ProductVariant.objects.filter(pk=variant_id).first() if variant_id else None
+        bundle = Bundle.objects.filter(pk=bundle_id, product=variant.product).first() if bundle_id and variant else None
+        accessory = Accessory.objects.filter(pk=accessory_id).first() if accessory_id else None
 
-        item, created = CartItem.objects.get_or_create(cart=cart, variant=variant, bundle=bundle)
+        if not variant and not accessory and not bundle:
+            raise ValidationError("Hech qanday mahsulot tanlanmagan.")
+
+        item, created = CartItem.objects.get_or_create(
+            cart=cart,
+            variant=variant,
+            bundle=bundle,
+            accessory=accessory
+        )
         item.quantity = item.quantity + quantity if not created else quantity
         item.save()
 
@@ -133,7 +75,6 @@ class CartAddAPIView(generics.CreateAPIView):
 
 
 class CartUpdateQuantityAPIView(generics.UpdateAPIView):
-    """PATCH /api/cart/update_quantity/ — miqdorni o‘zgartirish"""
     serializer_class = CartItemSerializer
     permission_classes = [IsAuthenticated]
 
@@ -147,7 +88,6 @@ class CartUpdateQuantityAPIView(generics.UpdateAPIView):
 
 
 class CartRemoveAPIView(generics.DestroyAPIView):
-    """POST /api/cart/remove/ — bitta elementni o‘chirish"""
     serializer_class = CartItemSerializer
     permission_classes = [IsAuthenticated]
 
@@ -159,7 +99,6 @@ class CartRemoveAPIView(generics.DestroyAPIView):
 
 
 class CartClearAPIView(generics.DestroyAPIView):
-    """DELETE /api/cart/clear/ — butun savatni tozalash"""
     permission_classes = [AllowAny]
 
     def delete(self, request, *args, **kwargs):

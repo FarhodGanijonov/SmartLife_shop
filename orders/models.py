@@ -1,37 +1,42 @@
 from django.utils import timezone
 from django.db import models
 from django.conf import settings
-from products.models import ProductVariant, Bundle
+from products.models import ProductVariant, Bundle, Accessory
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
+
+# Yetkazib berish varianti (masalan: express, oddiy, viloyat bo‘yicha)
 class DeliveryOption(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     delivery_time = models.CharField(max_length=100)
     cost = models.DecimalField(max_digits=10, decimal_places=2)
-    nationwide = models.BooleanField(default=False)  # Haqiqiy yetkazish hududi
-    priority = models.IntegerField(default=0)
+    nationwide = models.BooleanField(default=False)  # Butun mamlakat bo‘yicha yetkazish
+    priority = models.IntegerField(default=0)  # Ko‘rsatish tartibi
 
     class Meta:
-        ordering = ['priority']
+        ordering = ['priority']  # Admin va frontendda tartiblangan ko‘rinadi
 
     def __str__(self):
         return f"{self.name} ({self.delivery_time})"
 
 
+# To‘lov usullari
 class PaymentMethod(models.TextChoices):
     CASH = 'cash', 'Naqt pul'
     CARD = 'card', 'Plastik/Online'
-    INSTALLMENT = 'installment', 'Bolib to‘lash'
+    INSTALLMENT = 'installment', 'Bo‘lib to‘lash'
 
 
+# Aloqa usullari
 class ContactMethod(models.TextChoices):
     PHONE = 'phone', 'Telefon orqali'
     EMAIL = 'email', 'Email orqali'
 
 
+# Promokod modeli
 class PromoCode(models.Model):
     code = models.CharField(max_length=50, unique=True)
     discount_type = models.CharField(max_length=10, choices=[('percent', 'Foiz'), ('fixed', 'Summaga')])
@@ -40,14 +45,17 @@ class PromoCode(models.Model):
     used_count = models.PositiveIntegerField(default=0)
 
     def is_valid(self):
+        # Promokod muddati tugamagan bo‘lsa, aktiv hisoblanadi
         return timezone.now() <= self.valid_until
 
     def apply_discount(self, total):
+        # Chegirma turiga qarab narxni kamaytiradi
         if self.discount_type == 'percent':
             return float(total) * (1 - float(self.amount) / 100)
         return float(total) - float(self.amount)
 
 
+# Buyurtma modeli
 class Order(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -57,8 +65,6 @@ class Order(models.Model):
     ]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name="orders")
-    # product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="orders")
-    # quantity = models.PositiveIntegerField(default=1)
     delivery_option = models.ForeignKey(DeliveryOption, on_delete=models.SET_NULL, null=True, blank=True)
     address = models.CharField(max_length=255)
     city = models.CharField(max_length=100, blank=True, null=True)
@@ -78,23 +84,17 @@ class Order(models.Model):
         user_email = self.user.email if self.user else "Anonymous"
         return f"Order {self.id} - {user_email}"
 
-
-
     def calculate_total_price(self):
         """
-           Order uchun total_price hisoblash.
-           - Order hali saqlanmagan bo‘lsa (pk yo‘q), hisoblashni to‘xtatadi.
-           - OrderItem lar asosida jami summani topadi.
-           - Agar promo code mavjud bo‘lsa, chegirma qo‘llaydi.
+        Buyurtma uchun umumiy narxni hisoblaydi.
+        - OrderItem lar asosida narx yig‘iladi
+        - Promokod bo‘lsa, chegirma qo‘llanadi
         """
-        # Order hali bazaga saqlanmagan bo‘lsa, 0 qaytar
         if not self.pk:
             return 0
 
-        # OrderItem lar asosida jami narxni hisoblash
         total = sum(item.price * item.quantity for item in self.items.all())
 
-        # Promokod bo‘lsa, chegirma qo‘llash
         if self.promo_code:
             promo = PromoCode.objects.filter(code__iexact=self.promo_code).first()
             if promo and promo.is_valid():
@@ -102,33 +102,39 @@ class Order(models.Model):
                 promo.used_count = models.F('used_count') + 1
                 promo.save(update_fields=['used_count'])
 
-        # Faqat hisoblab, qaytaramiz — SAQLAMAYMIZ!
         return round(total, 2)
 
     def save(self, *args, **kwargs):
-        # Agar skip_calculation berilmagan bo‘lsa, avtomatik hisoblash
+        # Saqlashdan oldin narxni hisoblaydi (agar skip_calculation berilmagan bo‘lsa)
         if not kwargs.pop('skip_calculation', False):
             self.total_price = self.calculate_total_price()
         super().save(*args, **kwargs)
 
 
+# Buyurtmadagi har bir item (variant, aksessuar, yoki bundle)
 class OrderItem(models.Model):
     order = models.ForeignKey("Order", related_name="items", on_delete=models.CASCADE)
-    variant = models.ForeignKey("products.ProductVariant", on_delete=models.CASCADE)
+    variant = models.ForeignKey(ProductVariant, on_delete=models.SET_NULL, null=True, blank=True)
+    accessory = models.ForeignKey(Accessory, on_delete=models.SET_NULL, null=True, blank=True)
     bundle = models.ForeignKey(Bundle, on_delete=models.SET_NULL, null=True, blank=True)
-    price = models.DecimalField(max_digits=10, decimal_places=2)  # variant.price shu yerda saqlanadi
+    price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.PositiveIntegerField(default=1)
 
     @property
     def subtotal(self):
-        """Mahsulotning jami narxi (price * quantity)"""
+        # Item narxi × miqdor
         return round(self.price * self.quantity, 2)
 
     def __str__(self):
-        return f"{self.variant} x {self.quantity}"
+        if self.variant:
+            return f"{self.variant} x {self.quantity}"
+        elif self.accessory:
+            return f"{self.accessory} x {self.quantity}"
+        return f"Item x {self.quantity}"
 
+
+# Savatcha modeli (foydalanuvchi yoki sessiya asosida)
 class Cart(models.Model):
-    """Foydalanuvchining yoki sessiyaning savatchasi"""
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="cart")
     session_key = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -140,46 +146,34 @@ class Cart(models.Model):
         return f"Session {self.session_key} savatchasi"
 
     def total_price(self):
-        """Savatdagi jami summa"""
+        # Savatchadagi jami narx
         return sum([item.subtotal for item in self.items.all()])
 
 
+# Savatchadagi har bir item
 class CartItem(models.Model):
-    """Har bir mahsulotni savatchadagi yozuvi"""
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="items")
-    variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE)
+    variant = models.ForeignKey(ProductVariant, on_delete=models.SET_NULL, null=True, blank=True)
     bundle = models.ForeignKey(Bundle, on_delete=models.SET_NULL, null=True, blank=True)
+    accessory = models.ForeignKey(Accessory, on_delete=models.SET_NULL, null=True, blank=True)
     quantity = models.PositiveIntegerField(default=1)
 
     class Meta:
-        unique_together = ('cart', 'variant', 'bundle')
+        unique_together = ('cart', 'variant', 'bundle')  # Har bir kombinatsiya savatchada bir marta bo‘ladi
 
     def __str__(self):
         return f"{self.variant} × {self.quantity} ({self.bundle.name if self.bundle else 'No bundle'})"
 
     @property
     def unit_price(self):
-        return self.bundle.total_price if self.bundle else self.variant.price
+        # Narxni bundle, accessory yoki variantdan oladi
+        if self.bundle:
+            return self.bundle.total_price
+        elif self.accessory:
+            return self.accessory.price
+        return self.variant.price
 
     @property
     def subtotal(self):
-        return self.unit_price * self.quantity
-
-
-# class OrderItem(models.Model):
-#     order = models.ForeignKey(
-#         Order, on_delete=models.CASCADE, related_name='items'
-#     )
-#     variant = models.ForeignKey(
-#         ProductVariant, on_delete=models.PROTECT, related_name='order_items'
-#     )
-#     quantity = models.PositiveIntegerField(default=1)
-#     price = models.DecimalField(max_digits=10, decimal_places=2)  # variant.price ni saqlaydi
-#     subtotal = models.DecimalField(max_digits=10, decimal_places=2)  # price * quantity
-#
-#     def __str__(self):
-#         return f"{self.variant} x {self.quantity}"
-#
-#     class Meta:
-#         verbose_name = "Order Item"
-#         verbose_name_plural = "Order Items"
+        # Narx × miqdor
+        return round(self.unit_price * self.quantity, 2)

@@ -1,0 +1,58 @@
+version: '3'
+
+services:
+  web:
+    build: .  # Loyihaning root papkasidan Dockerfile asosida imij quriladi
+    env_file:
+      - .env  # Muhit o‘zgaruvchilari .env fayldan olinadi
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    # command: sh -c "python manage.py migrate && daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+    # Agar ASGI (Channels) ishlatilsa, daphne bilan ishga tushirish mumkin
+
+    volumes:
+      - .:/Smart  # Loyihani konteynerga bog‘lash
+      - static_volume:/Smart/staticfiles  # Static fayllar uchun alohida volume
+      - media_volume:/Smart/mediafiles    # Media fayllar uchun alohida volume
+
+    ports:
+      - "8024:8000"  # Host port 8024 orqali Django serverga kirish
+
+    depends_on:
+      - smart_db  # Django konteyner PostgreSQL konteynerdan keyin ishga tushadi
+      # - redis    # Redis ishlatilsa, bu yerda bog‘lanadi
+
+    restart: always  # Xatolikdan keyin avtomatik qayta ishga tushadi
+
+  smart_db:
+    image: postgres:latest  # PostgreSQL imiji
+    environment:
+      POSTGRES_DB: smart
+      POSTGRES_USER: user_smart
+      POSTGRES_PASSWORD: password_smart
+    ports:
+      - "5433:5432"  # Host port 5433 orqali PostgreSQLga kirish
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Ma’lumotlar saqlanadigan volume
+    restart: always
+
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres_user -d ari_app" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    # Healthcheck orqali PostgreSQL tayyorligini tekshiradi
+
+#  redis:
+#    image: redis:alpine
+#    ports:
+#      - "6372:6379"
+#    volumes:
+#      - redis_data:/data
+#    restart: always
+# Redis konfiguratsiyasi — agar caching yoki Celery ishlatilsa
+
+volumes:
+  postgres_data:     # PostgreSQL ma’lumotlar bazasi uchun
+  static_volume:     # Django static fayllari uchun
+  media_volume:      # Django media fayllari uchun
+#  redis_data:       # Redis ma’lumotlari uchun (agar kerak bo‘lsa)
