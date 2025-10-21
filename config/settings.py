@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Xavfsizlik sozlamalari
 SECRET_KEY = 'django-insecure-&#pq=w6+w)7u=iv5t0m+1foi7-afbongg9nk*$b)dm6b0lua2x'
 DEBUG = True
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 # Loyihadagi ilovalar
 INSTALLED_APPS = [
@@ -134,6 +134,6 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'your@gmail.com'
-EMAIL_HOST_PASSWORD = 'your_password'
+EMAIL_HOST_USER = 'your@gmail.com' # O'zingizni gmail manzilingiz.
+EMAIL_HOST_PASSWORD = 'your_password' # Gmail manzilingiz ichida app password yaratib joylang.
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER

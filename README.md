@@ -64,6 +64,8 @@ docker-compose run web python manage.py migrate
 docker-compose run web python manage.py createsuperuser
 
 
+# http://localhost:8024/ bu localdagi port yo'li serverda bolsa localhost o'rniga domen nomi yoziladi.
+
 .env fayli docker containerni ishga tushirish uchun 
     # Django settings
         DEBUG=1
